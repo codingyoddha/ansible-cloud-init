@@ -1,7 +1,11 @@
 ---
-- hosts: localhost
-  become_user: ansible
+- hosts: all
+  connection: local
+  remote_user: ansible
   become: true
   become_method: sudo
-  roles:
-    - docker
+  gather_facts: true
+
+  tasks:
+    - name: Run Docker setup
+      ansible.builtin.import_tasks: roles/docker/main.yml
