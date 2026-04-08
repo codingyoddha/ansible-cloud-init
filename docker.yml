@@ -1,6 +1,5 @@
 ---
 - hosts: localhost
-  connection: local
   become_user: ansible
   become: true
   become_method: sudo
