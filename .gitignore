@@ -1,0 +1,16 @@
+# OS metadata
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Editor and IDE files
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Ansible runtime files
+.ansible/
+*.retry

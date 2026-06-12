@@ -1,0 +1,106 @@
+---
+- name: Install NetBird prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create directory for NetBird apt keyring
+  ansible.builtin.file:
+    path: /usr/share/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Install NetBird repository signing key
+  ansible.builtin.get_url:
+    url: https://pkgs.netbird.io/debian/public.key
+    dest: /usr/share/keyrings/netbird-archive-keyring.asc
+    mode: "0644"
+
+- name: Configure NetBird apt repository
+  ansible.builtin.deb822_repository:
+    name: netbird
+    types:
+      - deb
+    uris:
+      - https://pkgs.netbird.io/debian
+    suites:
+      - stable
+    components:
+      - main
+    signed_by: /usr/share/keyrings/netbird-archive-keyring.asc
+    state: present
+
+- name: Install NetBird
+  ansible.builtin.apt:
+    name: netbird
+    state: present
+    update_cache: true
+
+- name: Enable and start NetBird
+  ansible.builtin.systemd:
+    name: netbird.service
+    enabled: true
+    state: started
+
+- name: Check NetBird connection
+  ansible.builtin.command: netbird status
+  register: netbird_status
+  changed_when: false
+  failed_when: false
+
+- name: Enroll NetBird peer
+  when: "'Connected' not in (netbird_status.stdout ~ netbird_status.stderr)"
+  block:
+    - name: Check for NetBird setup key
+      ansible.builtin.stat:
+        path: "{{ netbird_setup_key_path }}"
+      register: netbird_setup_key_stat
+
+    - name: Require NetBird setup key
+      ansible.builtin.assert:
+        that:
+          - netbird_setup_key_stat.stat.exists
+          - netbird_setup_key_stat.stat.isreg
+        fail_msg: "{{ netbird_setup_key_path }} is required to enroll this peer."
+
+    - name: Read NetBird setup key
+      ansible.builtin.slurp:
+        src: "{{ netbird_setup_key_path }}"
+      register: netbird_setup_key_content
+      no_log: true
+
+    - name: Require a configured NetBird setup key
+      ansible.builtin.assert:
+        that:
+          - (netbird_setup_key_content.content | b64decode | trim | length) > 0
+          - (netbird_setup_key_content.content | b64decode | trim) != 'REPLACE_WITH_NETBIRD_SETUP_KEY'
+        fail_msg: Replace the NetBird setup key placeholder in Hetzner Cloud user-data.
+      no_log: true
+
+    - name: Connect NetBird peer
+      ansible.builtin.command:
+        argv:
+          - netbird
+          - up
+          - --setup-key
+          - "{{ netbird_setup_key_content.content | b64decode | trim }}"
+      changed_when: true
+      no_log: true
+
+- name: Verify NetBird connection
+  ansible.builtin.command: netbird status
+  register: netbird_verified_status
+  changed_when: false
+  failed_when: "'Connected' not in (netbird_verified_status.stdout ~ netbird_verified_status.stderr)"
+
+- name: Remove temporary NetBird setup key
+  ansible.builtin.file:
+    path: "{{ netbird_setup_key_path }}"
+    state: absent
+  no_log: true

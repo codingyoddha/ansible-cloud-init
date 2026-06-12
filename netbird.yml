@@ -1,0 +1,15 @@
+---
+- name: Bootstrap NetBird client
+  hosts: all
+  connection: local
+  remote_user: ansible
+  become: true
+  become_method: ansible.builtin.sudo
+  gather_facts: true
+
+  vars:
+    netbird_setup_key_path: /run/netbird/setup-key
+
+  tasks:
+    - name: Run NetBird setup
+      ansible.builtin.import_tasks: roles/netbird/main.yml
