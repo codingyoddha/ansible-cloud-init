@@ -1,9 +1,10 @@
 ---
-- hosts: all
+- name: Install Docker runtime
+  hosts: all
   connection: local
   remote_user: ansible
   become: true
-  become_method: sudo
+  become_method: ansible.builtin.sudo
   gather_facts: true
 
   tasks:

@@ -1,0 +1,18 @@
+---
+- name: Configure encrypted application-data partition
+  hosts: all
+  connection: local
+  remote_user: ansible
+  become: true
+  become_method: sudo
+  gather_facts: true
+
+  pre_tasks:
+    - name: Resolve root filesystem source
+      ansible.builtin.command:
+        argv: [findmnt, --noheadings, --output, SOURCE, /]
+      register: findmnt_root_source
+      changed_when: false
+
+  roles:
+    - role: luks_data_disk

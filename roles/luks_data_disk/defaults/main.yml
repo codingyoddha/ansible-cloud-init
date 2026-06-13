@@ -1,0 +1,8 @@
+---
+luks_mapper_name: secure_data
+luks_mount_point: /secure
+luks_required_paths:
+  - /secure/lldap
+  - /secure/authelia
+  - /secure/restic-cache
+

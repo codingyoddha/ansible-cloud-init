@@ -1,0 +1,12 @@
+---
+- name: Install Podman runtime
+  hosts: all
+  connection: local
+  remote_user: ansible
+  become: true
+  become_method: sudo
+  gather_facts: true
+
+  tasks:
+    - name: Run Podman setup
+      ansible.builtin.import_tasks: roles/podman/main.yml

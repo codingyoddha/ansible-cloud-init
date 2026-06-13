@@ -1,0 +1,104 @@
+---
+- name: Verify and maintain encrypted root storage
+  hosts: all
+  connection: local
+  remote_user: ansible
+  become: true
+  become_method: ansible.builtin.sudo
+  gather_facts: false
+
+  tasks:
+    - name: Install encrypted-root initramfs tooling
+      ansible.builtin.apt:
+        name:
+          - cryptsetup-initramfs
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Resolve root filesystem source
+      ansible.builtin.command:
+        argv:
+          - findmnt
+          - --noheadings
+          - --output
+          - SOURCE
+          - /
+      register: encrypted_root_source
+      changed_when: false
+
+    - name: Read root block-device ancestry
+      ansible.builtin.command:
+        argv:
+          - lsblk
+          - --inverse
+          - --noheadings
+          - --paths
+          - --output
+          - NAME,TYPE
+          - "{{ encrypted_root_source.stdout | trim }}"
+      register: encrypted_root_ancestry
+      changed_when: false
+
+    - name: Require encrypted root block-device layer
+      ansible.builtin.assert:
+        that:
+          - encrypted_root_ancestry.stdout_lines | select('search', ' crypt$') | length == 1
+        fail_msg: The root filesystem must be backed by a LUKS2 encrypted device.
+
+    - name: Resolve root encryption mapper
+      ansible.builtin.set_fact:
+        encrypted_root_mapper: >-
+          {{
+            encrypted_root_ancestry.stdout_lines
+            | select('search', ' crypt$')
+            | first
+            | split
+            | first
+            | basename
+          }}
+
+    - name: Read root encryption status
+      ansible.builtin.command:
+        argv:
+          - cryptsetup
+          - status
+          - "{{ encrypted_root_mapper }}"
+      register: encrypted_root_status
+      changed_when: false
+
+    - name: Require LUKS2 encrypted root filesystem
+      ansible.builtin.assert:
+        that:
+          - "'type: LUKS2' in encrypted_root_status.stdout"
+        fail_msg: The root filesystem encryption layer must use LUKS2.
+
+    - name: Read active swap devices
+      ansible.builtin.command:
+        argv:
+          - swapon
+          - --noheadings
+          - --show
+          - --output
+          - NAME
+      register: active_swap_devices
+      changed_when: false
+
+    - name: Require encrypted swap devices
+      ansible.builtin.assert:
+        that:
+          - >-
+            item == '/swapfile'
+            or item.startswith('/dev/dm-')
+            or item.startswith('/dev/mapper/')
+        fail_msg: "Active swap device {{ item }} is not encrypted."
+      loop: "{{ active_swap_devices.stdout_lines }}"
+
+    - name: Rebuild initramfs
+      ansible.builtin.command:
+        argv:
+          - update-initramfs
+          - -u
+          - -k
+          - all
+      changed_when: true

@@ -1,0 +1,10 @@
+---
+# Store the real passphrase in an Ansible Vault encrypted variables file.
+luks_device: /dev/disk/by-partlabel/secure-data
+luks_passphrase: CHANGE_ME_WITH_ANSIBLE_VAULT
+wipe_luks_device: false
+luks_required_paths:
+  - /secure/lldap
+  - /secure/authelia
+  - /secure/restic-cache
+

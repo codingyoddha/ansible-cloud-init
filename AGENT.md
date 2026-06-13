@@ -28,3 +28,9 @@ This repository is for the first machine-side `ansible-pull` bootstrap only.
 - Preserve the existing file layout unless the user asks for a refactor.
 - Avoid adding defensive logic, validations, or assertions when the user has already provided the required environment assumptions.
 - Do not broaden the problem statement on your own.
+
+## Approved Plans
+
+- Save every user-approved implementation plan under `docs/plans/` before or alongside implementation.
+- Use `YYYY-MM-DD-<descriptive-name>.md` filenames.
+- Update `docs/plans/README.md` with the plan status and replacement link when superseded.

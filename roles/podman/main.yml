@@ -1,0 +1,21 @@
+---
+- name: Install Podman and rootless runtime prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - python3-apt
+      - podman
+      - uidmap
+      - slirp4netns
+      - fuse-overlayfs
+      - dbus-user-session
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable user lingering
+  ansible.builtin.command:
+    argv: [loginctl, enable-linger, ansible]
+  args:
+    creates: /var/lib/systemd/linger/ansible

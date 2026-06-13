@@ -1,0 +1,181 @@
+---
+- name: Require secure-data configuration
+  ansible.builtin.assert:
+    that:
+      - luks_device is defined
+      - luks_device | length > 0
+      - luks_passphrase is defined
+      - luks_passphrase | length > 0
+    fail_msg: luks_device and vault-encrypted luks_passphrase are required.
+  no_log: true
+
+- name: Install secure-data disk packages
+  ansible.builtin.apt:
+    name:
+      - cryptsetup
+      - lvm2
+      - util-linux
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Resolve root backing disk
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    findmnt --noheadings --output SOURCE /
+    | xargs lsblk --noheadings --paths --output PKNAME
+    | tail -n 1
+  args:
+    executable: /bin/bash
+  register: luks_root_parent
+  changed_when: false
+
+- name: Inspect secure-data device
+  ansible.builtin.command:
+    argv: [lsblk, --json, --paths, --output, NAME,TYPE,FSTYPE,MOUNTPOINTS,PKNAME, "{{ luks_device }}"]
+  register: luks_device_lsblk
+  changed_when: false
+  failed_when: false
+
+- name: Require a safe block device
+  ansible.builtin.assert:
+    that:
+      - luks_device_lsblk.rc == 0
+      - luks_device != (findmnt_root_source.stdout | default(''))
+      - luks_device != (luks_root_parent.stdout | trim)
+      - (luks_device_lsblk.stdout | from_json).blockdevices | map(attribute='mountpoints') | flatten | select | length == 0
+    fail_msg: "Refusing unsafe secure-data device {{ luks_device }}. lsblk: {{ luks_device_lsblk.stdout }}"
+
+- name: Detect existing LUKS container
+  ansible.builtin.command:
+    argv: [cryptsetup, isLuks, "{{ luks_device }}"]
+  register: luks_is_luks
+  changed_when: false
+  failed_when: false
+
+- name: Require explicit wipe approval for first format
+  ansible.builtin.assert:
+    that:
+      - wipe_luks_device | default(false) | bool
+    fail_msg: Set wipe_luks_device=true explicitly before formatting {{ luks_device }}.
+  when: luks_is_luks.rc != 0
+
+- name: Format secure-data partition as LUKS2
+  ansible.builtin.command:
+    argv:
+      - cryptsetup
+      - luksFormat
+      - --batch-mode
+      - --type
+      - luks2
+      - --key-file=-
+      - "{{ luks_device }}"
+    stdin: "{{ luks_passphrase }}"
+  when:
+    - luks_is_luks.rc != 0
+    - not ansible_check_mode
+  no_log: true
+
+- name: Check secure-data mapper
+  ansible.builtin.stat:
+    path: "/dev/mapper/{{ luks_mapper_name }}"
+  register: luks_mapper
+
+- name: Open secure-data mapper
+  ansible.builtin.command:
+    argv: [cryptsetup, open, --key-file=-, "{{ luks_device }}", "{{ luks_mapper_name }}"]
+    stdin: "{{ luks_passphrase }}"
+  when:
+    - not luks_mapper.stat.exists
+    - not ansible_check_mode
+  no_log: true
+
+- name: Detect secure-data filesystem
+  ansible.builtin.command:
+    argv: [blkid, --output, value, --match-tag, TYPE, "/dev/mapper/{{ luks_mapper_name }}"]
+  register: secure_filesystem
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Create secure-data ext4 filesystem
+  ansible.builtin.command:
+    argv: [mkfs.ext4, "/dev/mapper/{{ luks_mapper_name }}"]
+  when:
+    - not ansible_check_mode
+    - secure_filesystem.stdout | default('') | trim == ''
+
+- name: Read LUKS UUID
+  ansible.builtin.command:
+    argv: [cryptsetup, luksUUID, "{{ luks_device }}"]
+  register: luks_uuid
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Read secure-data filesystem UUID
+  ansible.builtin.command:
+    argv: [blkid, --output, value, --match-tag, UUID, "/dev/mapper/{{ luks_mapper_name }}"]
+  register: secure_uuid
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Configure manual secure-data unlock
+  ansible.builtin.lineinfile:
+    path: /etc/crypttab
+    regexp: "^{{ luks_mapper_name }} "
+    line: "{{ luks_mapper_name }} UUID={{ luks_uuid.stdout | trim }} none luks"
+    create: true
+    mode: "0644"
+  when: not ansible_check_mode
+
+- name: Create secure-data mount point
+  ansible.builtin.file:
+    path: "{{ luks_mount_point }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure secure-data mount
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: "^[^#]+\\s+{{ luks_mount_point | regex_escape }}\\s+"
+    line: "UUID={{ secure_uuid.stdout | trim }} {{ luks_mount_point }} ext4 noatime 0 2"
+  when: not ansible_check_mode
+
+- name: Mount secure-data filesystem
+  ansible.builtin.command:
+    argv: [mount, "{{ luks_mount_point }}"]
+  register: secure_mount
+  changed_when: secure_mount.rc == 0
+  failed_when: secure_mount.rc != 0
+  when:
+    - not ansible_check_mode
+    - ansible_mounts | selectattr('mount', 'equalto', luks_mount_point) | length == 0
+
+- name: Create secure application directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop: "{{ luks_required_paths }}"
+  when: not ansible_check_mode
+
+- name: Validate secure-data mount and application paths
+  ansible.builtin.command:
+    argv: [findmnt, --noheadings, --output, SOURCE, --target, "{{ item }}"]
+  loop: "{{ [luks_mount_point] + luks_required_paths }}"
+  register: secure_path_mounts
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require every persistent path on secure-data mapper
+  ansible.builtin.assert:
+    that:
+      - item.stdout | trim == "/dev/mapper/" + luks_mapper_name
+    fail_msg: "{{ item.item }} is not backed by /dev/mapper/{{ luks_mapper_name }}."
+  loop: "{{ secure_path_mounts.results | default([]) }}"
+  when: not ansible_check_mode
+

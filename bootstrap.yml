@@ -1,6 +1,6 @@
 ---
-- name: Run Docker bootstrap
-  ansible.builtin.import_playbook: docker.yml
+- name: Run Podman bootstrap
+  ansible.builtin.import_playbook: podman.yml
 
 - name: Run NetBird bootstrap
   ansible.builtin.import_playbook: netbird.yml
